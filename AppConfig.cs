@@ -9,6 +9,7 @@ internal sealed class AppConfig
     public bool WatchWhea { get; set; } = true;
     public bool WatchStorage { get; set; } = true;
     public bool WatchThermal { get; set; } = true;
+    public bool WatchGpu { get; set; } = true;
     public bool WatchDumpFailure { get; set; } = true;
     public bool WatchNtfs { get; set; } = true;
     public int DefaultSuppressionMinutes { get; set; } = 15;

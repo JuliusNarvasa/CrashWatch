@@ -31,6 +31,7 @@ internal static class EventXml
 internal sealed class BootState
 {
     public DateTime? LastSeenShutdownUtc { get; set; }
+    public DateTime? LastEventSweepUtc { get; set; }
 
     private static string FilePath => Path.Combine(Log.Dir, "state.json");
     private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
@@ -124,12 +125,64 @@ internal static class BootSweep
                 if (toast)
                     ToastReport(report);
             }
+
+            SweepMissedGpuEvents(state, history, toast);
         }
         catch (Exception ex)
         {
             Log.Write("boot sweep failed: " + ex.Message);
         }
         return reports;
+    }
+
+    /// <summary>
+    /// Reports GPU-related events (shell crashes, DWM crashes) that landed while the watcher
+    /// was not running, so a GPU crash that kills the tray app is still reported next start.
+    /// </summary>
+    private static void SweepMissedGpuEvents(BootState state, HistoryStore? history, bool toast)
+    {
+        try
+        {
+            if (!AppConfig.Current.WatchGpu) return;
+
+            var since = state.LastEventSweepUtc
+                        ?? DateTime.UtcNow.AddHours(-AppConfig.Current.LookbackHoursForBootSweep);
+            var until = DateTime.UtcNow;
+            state.LastEventSweepUtc = until;
+            state.Save();
+
+            var iso = since.ToUniversalTime().ToString("o");
+            var xpath = $"*[System[TimeCreated[@SystemTime >= '{iso}'] and " +
+                        "((Provider[@Name='Microsoft-Windows-Winlogon'] and (EventID=1002)) or " +
+                        "(Provider[@Name='Application Error'] and (EventID=1000)))]]";
+
+            using var reader = new EventLogReader(new EventLogQuery("Application", PathType.LogName, xpath));
+            int shells = 0, dwms = 0;
+            EventRecord? rec;
+            while ((rec = reader.ReadEvent()) != null)
+            {
+                using (rec)
+                {
+                    var msg = rec.FormatDescription() ?? "";
+                    if (string.Equals(rec.ProviderName, "Microsoft-Windows-Winlogon", StringComparison.OrdinalIgnoreCase))
+                        shells++;
+                    else if (msg.Contains("dwm", StringComparison.OrdinalIgnoreCase))
+                        dwms++;
+                }
+            }
+
+            if (shells + dwms == 0) return;
+
+            var summary = $"While the watcher was down: {shells} shell crash(es), {dwms} DWM crash(es).";
+            Log.Write(summary);
+            history?.Add(until, "Warning", "BootSweep/GPU", 0, summary);
+            if (toast)
+                ToastService.Show("GPU-related crashes missed", summary, critical: true);
+        }
+        catch (Exception ex)
+        {
+            Log.Write("gpu sweep failed: " + ex.Message);
+        }
     }
 
     private static void ToastReport(Report r)

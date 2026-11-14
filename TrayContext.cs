@@ -8,6 +8,7 @@ internal sealed class TrayContext : ApplicationContext
     private readonly HistoryStore _history = new();
     private readonly RateLimiter _limiter = new();
     private readonly LogWatcher _watcher = new();
+    private readonly GpuDumpWatcher _dumpWatcher = new();
     private readonly ContextMenuStrip _menu = new();
     private readonly ToolStripMenuItem _pauseItem;
     private HistoryForm? _historyForm;
@@ -36,7 +37,21 @@ internal sealed class TrayContext : ApplicationContext
         });
 
         StartWatcher();
+        StartDumpWatcher();
         BootSweep.Run(toast: true, history: _history);
+    }
+
+    private void StartDumpWatcher()
+    {
+        _dumpWatcher.DumpCreated += path =>
+        {
+            ToastService.Show("GPU kernel dump written",
+                $"Windows captured a live kernel dump — the display driver reset (TDR).\n{path}",
+                critical: true);
+            _history.Add(DateTime.Now, "Critical", "LiveKernelReports", 0,
+                $"GPU kernel dump: {path}");
+        };
+        _dumpWatcher.Start();
     }
 
     private void StartWatcher()
@@ -153,6 +168,7 @@ internal sealed class TrayContext : ApplicationContext
         _icon.Visible = false;
         _icon.Dispose();
         _watcher.Dispose();
+        _dumpWatcher.Dispose();
         base.ExitThreadCore();
     }
 }

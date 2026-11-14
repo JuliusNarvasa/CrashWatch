@@ -3,12 +3,12 @@ using System.Diagnostics.Eventing.Reader;
 namespace CrashWatch;
 
 /// <summary>
-/// Push-based watcher over the System event log. Fires <see cref="RuleFired"/> whenever
-/// an event matching one of the rules arrives.
+/// Push-based watcher over the Windows event logs (System + Application).
+/// Fires <see cref="RuleFired"/> whenever an event matching one of the rules arrives.
 /// </summary>
 internal sealed class LogWatcher : IDisposable
 {
-    private EventLogWatcher? _watcher;
+    private readonly List<EventLogWatcher> _watchers = new();
     private List<WatchRule> _rules = new();
 
     public event Action<WatchRule, EventRecord>? RuleFired;
@@ -23,13 +23,23 @@ internal sealed class LogWatcher : IDisposable
             return;
         }
 
-        var xpath = WatchRules.BuildXPath(_rules);
-        Log.Write($"watcher started with {_rules.Count} rules");
-
-        var query = new EventLogQuery("System", PathType.LogName, xpath);
-        _watcher = new EventLogWatcher(query);
-        _watcher.EventRecordWritten += OnEvent;
-        _watcher.Enabled = true;
+        foreach (var group in _rules.GroupBy(r => r.Log))
+        {
+            try
+            {
+                var xpath = WatchRules.BuildXPath(group.ToList());
+                var query = new EventLogQuery(group.Key, PathType.LogName, xpath);
+                var watcher = new EventLogWatcher(query);
+                watcher.EventRecordWritten += OnEvent;
+                watcher.Enabled = true;
+                _watchers.Add(watcher);
+                Log.Write($"watcher [{group.Key}] started with {group.Count()} rules");
+            }
+            catch (Exception ex)
+            {
+                Log.Write($"watcher [{group.Key}] failed to start: {ex.Message}");
+            }
+        }
     }
 
     private void OnEvent(object? sender, EventRecordWrittenEventArgs e)
@@ -41,6 +51,13 @@ internal sealed class LogWatcher : IDisposable
                 string.Equals(r.Provider, rec.ProviderName, StringComparison.OrdinalIgnoreCase) &&
                 r.EventId == rec.Id);
             if (rule == null) return;
+
+            if (rule.MessageContains != null)
+            {
+                var msg = rec.FormatDescription() ?? "";
+                if (!msg.Contains(rule.MessageContains, StringComparison.OrdinalIgnoreCase)) return;
+            }
+
             RuleFired?.Invoke(rule, rec);
         }
         catch (Exception ex)
@@ -51,14 +68,16 @@ internal sealed class LogWatcher : IDisposable
 
     public void Stop()
     {
-        if (_watcher == null) return;
-        try
+        foreach (var w in _watchers)
         {
-            _watcher.Enabled = false;
-            _watcher.Dispose();
+            try
+            {
+                w.Enabled = false;
+                w.Dispose();
+            }
+            catch { }
         }
-        catch { }
-        _watcher = null;
+        _watchers.Clear();
     }
 
     public void Dispose() => Stop();

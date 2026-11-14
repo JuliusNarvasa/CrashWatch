@@ -28,12 +28,6 @@ internal sealed class HistoryForm : Form
         _list.Columns.Add("Event", 60);
         _list.Columns.Add("Message", 380);
 
-        foreach (var e in _store.Entries.OrderBy(x => x.Time))
-            AddRow(e);
-
-        _store.Added += OnAdded;
-        _store.Cleared += OnCleared;
-
         var bottom = new Panel { Dock = DockStyle.Bottom, Height = 34 };
         _status = new Label
         {
@@ -61,6 +55,13 @@ internal sealed class HistoryForm : Form
 
         Controls.Add(_list);
         Controls.Add(bottom);
+
+        foreach (var e in _store.Entries.OrderBy(x => x.Time))
+            AddRow(e);
+
+        _store.Added += OnAdded;
+        _store.Cleared += OnCleared;
+
         RefreshStatus();
         FormClosed += (_, _) =>
         {
@@ -99,6 +100,7 @@ internal sealed class HistoryForm : Form
 
     private void RefreshStatus()
     {
+        if (_status == null || _store == null) return;
         _status.Text = $"{_store.Entries.Count} events · csv: {HistoryStore.FilePath}";
     }
 

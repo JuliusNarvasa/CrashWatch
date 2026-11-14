@@ -9,7 +9,9 @@ internal sealed record WatchRule(
     string Title,
     string Detail,
     bool Aggregate,
-    int SuppressMinutes);
+    int SuppressMinutes,
+    string Log = "System",
+    string? MessageContains = null);
 
 internal static class WatchRules
 {
@@ -76,6 +78,34 @@ internal static class WatchRules
                 "NTFS corruption",
                 "Windows could not open a file due to file system corruption.",
                 Aggregate: true, SuppressMinutes: 30));
+        }
+
+        if (cfg.WatchGpu)
+        {
+            // The shell dying without any TDR/DxgKrnl event is this machine's GPU-crash signature.
+            rules.Add(new WatchRule("Microsoft-Windows-Winlogon", 1002, EventSeverity.Critical,
+                "Shell (explorer.exe) crashed",
+                "The Windows shell stopped unexpectedly and was restarted by userinit. Often follows a GPU driver failure.",
+                Aggregate: true, SuppressMinutes: 15, Log: "Application"));
+            rules.Add(new WatchRule("Application Error", 1000, EventSeverity.Critical,
+                "DWM crashed",
+                "Desktop Window Manager (dwm.exe) crashed — the GPU compositor died.",
+                Aggregate: true, SuppressMinutes: 30, Log: "Application", MessageContains: "dwm"));
+            rules.Add(new WatchRule("Display", 4101, EventSeverity.Critical,
+                "GPU driver timeout (TDR)",
+                "The display driver stopped responding and was recovered by Windows.",
+                Aggregate: true, SuppressMinutes: 15, Log: "System"));
+            foreach (var id in new[] { 4101, 4113, 4119, 4121, 4129, 4132, 4133 })
+            {
+                rules.Add(new WatchRule("Microsoft-Windows-DxgKrnl", id, EventSeverity.Critical,
+                    "Graphics kernel error",
+                    "The graphics kernel reported an error (GPU failure or reset).",
+                    Aggregate: true, SuppressMinutes: 15, Log: "System"));
+                rules.Add(new WatchRule("DxgKrnl", id, EventSeverity.Critical,
+                    "Graphics kernel error",
+                    "The graphics kernel reported an error (GPU failure or reset).",
+                    Aggregate: true, SuppressMinutes: 15, Log: "System"));
+            }
         }
 
         if (cfg.WatchThermal)
